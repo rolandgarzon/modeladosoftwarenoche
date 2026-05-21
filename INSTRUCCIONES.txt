@@ -1,0 +1,432 @@
+================================================================================
+INSTRUCCIONES PARA CREAR UN BACKEND PYTHON CON ARQUITECTURA N-CAPAS
+Proyecto de referencia: UTEDE - Sistema de Gestión de Laboratorios
+================================================================================
+
+Este documento explica paso a paso cómo replicar este proyecto desde cero.
+Stack usado: Python + FastAPI + SQLAlchemy 2.0 + PyMySQL + Pydantic v2
+
+
+================================================================================
+PASO 1 — PREPARAR EL ENTORNO DE TRABAJO
+================================================================================
+
+1.1 Crear la carpeta del proyecto y entrar en ella:
+    mkdir mi-proyecto
+    cd mi-proyecto
+
+1.2 Crear un entorno virtual de Python:
+    python -m venv venv
+
+    ¿Por qué?
+    El entorno virtual aísla las dependencias del proyecto para que no
+    interfieran con otros proyectos ni con la instalación global de Python.
+
+1.3 Activar el entorno virtual:
+    Windows (PowerShell):   venv\Scripts\Activate.ps1
+    Windows (CMD):          venv\Scripts\activate.bat
+    Mac / Linux:            source venv/bin/activate
+
+    Cuando está activo, verás (venv) al inicio de la línea de comandos.
+
+1.4 Instalar las dependencias:
+    pip install fastapi uvicorn sqlalchemy pymysql python-dotenv pydantic
+
+    Qué hace cada paquete:
+      fastapi      → Framework web para construir APIs REST modernas
+      uvicorn      → Servidor ASGI que ejecuta la aplicación FastAPI
+      sqlalchemy   → ORM para trabajar con la base de datos en Python
+      pymysql      → Driver que conecta SQLAlchemy con MySQL
+      python-dotenv→ Lee variables de configuración desde el archivo .env
+      pydantic     → Valida y serializa datos (schemas de entrada/salida)
+
+1.5 (Opcional) Guardar las dependencias en un archivo:
+    pip freeze > requirements.txt
+
+    Esto permite que otro desarrollador instale todo con:
+    pip install -r requirements.txt
+
+
+================================================================================
+PASO 2 — CREAR LA ESTRUCTURA DE CARPETAS
+================================================================================
+
+Crear la siguiente estructura de directorios:
+
+    mi-proyecto/
+    ├── venv/                    ← entorno virtual (generado en el paso anterior)
+    ├── src/
+    │   ├── __init__.py          ← marca src como paquete Python
+    │   ├── api/
+    │   │   ├── __init__.py
+    │   │   ├── route.py         ← endpoints HTTP (Capa API)
+    │   │   └── schemas.py       ← DTOs Pydantic (Capa API)
+    │   ├── application/
+    │   │   ├── __init__.py
+    │   │   └── services.py      ← lógica de negocio (Capa Aplicación)
+    │   ├── domain/
+    │   │   ├── __init__.py
+    │   │   └── models.py        ← entidades ORM (Capa Dominio)
+    │   └── infraestructure/
+    │       ├── __init__.py
+    │       ├── database.py      ← conexión a BD (Capa Infraestructura)
+    │       └── repository.py    ← acceso a datos (Capa Infraestructura)
+    ├── .env                     ← variables de entorno (NO subir a git)
+    └── main.py                  ← punto de entrada de la aplicación
+
+Comando para crear todos los archivos vacíos en Windows (PowerShell):
+    New-Item src\__init__.py, src\api\__init__.py, src\api\route.py,
+             src\api\schemas.py, src\application\__init__.py,
+             src\application\services.py, src\domain\__init__.py,
+             src\domain\models.py, src\infraestructure\__init__.py,
+             src\infraestructure\database.py, src\infraestructure\repository.py,
+             main.py -Force
+
+¿Para qué sirve cada __init__.py?
+    Le indica a Python que la carpeta es un "paquete" y permite hacer imports
+    como: from src.domain.models import MiModelo
+
+
+================================================================================
+PASO 3 — CONFIGURAR LAS VARIABLES DE ENTORNO (.env)
+================================================================================
+
+Crear el archivo .env en la raíz del proyecto con este contenido:
+
+    DB_HOST=tu-servidor.rds.amazonaws.com
+    DB_PORT=3306
+    DB_USER=tu_usuario
+    DB_PASSWORD=tu_contraseña
+    DB_NAME=nombre_de_tu_base_de_datos
+
+IMPORTANTE: Agregar .env al archivo .gitignore para no subir contraseñas
+a repositorios públicos (GitHub, GitLab, etc.).
+
+
+================================================================================
+PASO 4 — IMPLEMENTAR LA CAPA DE INFRAESTRUCTURA: database.py
+================================================================================
+
+Este archivo establece la conexión con MySQL mediante SQLAlchemy.
+
+Conceptos que debes entender:
+  - Engine:      el objeto que gestiona el "pool" de conexiones físicas a la BD
+  - Session:     unidad de trabajo; acumula operaciones y las envía de una vez
+  - Base:        clase de la que heredan todos los modelos ORM
+  - get_db():    generador que entrega una sesión a cada petición HTTP
+
+Pasos para implementarlo:
+  1. Importar os, load_dotenv, create_engine, sessionmaker, DeclarativeBase
+  2. Llamar load_dotenv() para cargar el .env
+  3. Construir DATABASE_URL con el formato:
+         mysql+pymysql://usuario:contraseña@host:puerto/base_de_datos
+  4. Crear el engine con create_engine(DATABASE_URL, pool_pre_ping=True)
+  5. Crear la fábrica de sesiones con sessionmaker(...)
+  6. Definir la clase Base(DeclarativeBase)
+  7. Implementar get_db() como generador con try/finally
+
+
+================================================================================
+PASO 5 — IMPLEMENTAR LA CAPA DE DOMINIO: models.py
+================================================================================
+
+Cada clase ORM representa una tabla de la base de datos.
+
+Antes de escribir el código, analiza la BD con estas consultas SQL:
+  - Ver todas las tablas:     SHOW TABLES;
+  - Ver columnas de una tabla: DESCRIBE nombre_tabla;
+  - Ver llaves foráneas:
+        SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+        FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+        WHERE TABLE_SCHEMA = 'tu_base_de_datos' AND REFERENCED_TABLE_NAME IS NOT NULL;
+
+Reglas para escribir los modelos (SQLAlchemy 2.0):
+  a) Heredar de Base
+  b) Definir __tablename__ con el nombre exacto de la tabla en la BD
+  c) Cada columna → mapped_column() con su tipo y restricciones:
+       - Integer, String(n), DateTime, Text → tipos de columna
+       - primary_key=True → llave primaria
+       - autoincrement=True → auto-incremental
+       - unique=True → no se repiten
+       - ForeignKey("TABLA.columna") → llave foránea
+       - Optional[tipo] → puede ser NULL
+  d) Cada relación → relationship() con back_populates para la relación inversa
+  e) Cuando hay múltiples FK hacia la misma tabla, usar foreign_keys=[] en relationship()
+  f) uselist=False → relación uno-a-uno (en lugar de lista)
+
+
+================================================================================
+PASO 6 — IMPLEMENTAR LA CAPA DE INFRAESTRUCTURA: repository.py
+================================================================================
+
+El repositorio encapsula las consultas SQL. La regla es simple:
+"Solo sabe cómo guardar y recuperar datos; no sabe por qué".
+
+Patrón recomendado:
+
+  1. Crear BaseRepository con operaciones genéricas:
+       - get_all(skip, limit)   → SELECT con paginación
+       - get_by_id(id)          → SELECT WHERE pk = id
+       - create(obj)            → INSERT
+       - update(obj)            → UPDATE (el objeto ya tiene los cambios)
+       - delete(id)             → DELETE
+
+  2. Para cada entidad, crear una clase que herede de BaseRepository:
+       class MiEntidadRepository(BaseRepository):
+           def __init__(self, db: Session):
+               super().__init__(MiEntidad, db)
+
+  3. Agregar métodos de consulta específicos según las necesidades:
+       def get_by_correo(self, correo: str) → filter por campo único
+       def get_activos(self)                → filter por estado
+       def get_by_usuario(self, id)         → filter por FK
+
+  Operaciones SQLAlchemy que más se usan:
+    self.db.query(Modelo)               → inicia la consulta
+    .filter(Modelo.campo == valor)      → agrega condición WHERE
+    .filter(cond1, cond2)               → AND entre condiciones
+    .offset(n).limit(n)                 → paginación
+    .all()                              → devuelve lista
+    .first()                            → devuelve uno o None
+    self.db.add(obj)                    → agrega al INSERT pendiente
+    self.db.commit()                    → envía a la BD
+    self.db.refresh(obj)                → recarga desde la BD
+    self.db.delete(obj)                 → marca para DELETE
+
+
+================================================================================
+PASO 7 — IMPLEMENTAR LA CAPA DE APLICACIÓN: services.py
+================================================================================
+
+Los servicios contienen la lógica de negocio. La regla es:
+"Sabe QUÉ hacer con los datos, pero delega el CÓMO al repositorio".
+
+Estructura de cada servicio:
+
+  class MiEntidadService:
+      def __init__(self, db: Session):
+          self.repo = MiEntidadRepository(db)   # crea el repositorio
+
+      def listar(self):
+          return self.repo.get_all()
+
+      def obtener(self, id):
+          return self.repo.get_by_id(id)
+
+      def crear(self, campo1, campo2, ...):
+          obj = MiEntidad(campo1=campo1, campo2=campo2)
+          return self.repo.create(obj)
+
+      def actualizar(self, id, **kwargs):
+          obj = self.repo.get_by_id(id)
+          if not obj: return None
+          for key, value in kwargs.items():
+              if hasattr(obj, key): setattr(obj, key, value)
+          return self.repo.update(obj)
+
+      def eliminar(self, id):
+          return self.repo.delete(id)
+
+Para lógica de negocio más compleja (aprobar reserva, registrar devolución):
+  def aprobar(self, id_reserva, id_monitor):
+      reserva = self.repo.get_by_id(id_reserva)
+      if not reserva: return None
+      reserva.estado = "Aprobada"           # aplica la regla de negocio
+      reserva.id_monitor_aprueba = id_monitor
+      return self.repo.update(reserva)
+
+
+================================================================================
+PASO 8 — IMPLEMENTAR LA CAPA API: schemas.py (DTOs Pydantic)
+================================================================================
+
+Los schemas son los contratos de la API: validan lo que entra y definen
+lo que sale en cada endpoint.
+
+Convención de nombres:
+  XxxCreate    → campos para crear (body del POST)
+  XxxUpdate    → campos para actualizar (todos Optional, body del PUT)
+  XxxResponse  → campos que se devuelven al cliente (GET/POST/PUT)
+  XxxAccion    → campos para una acción específica (body del PATCH)
+
+Estructura básica:
+  from pydantic import BaseModel
+  from typing import Optional
+  from datetime import datetime
+
+  class MiEntidadCreate(BaseModel):
+      campo_requerido: str
+      campo_opcional: Optional[str] = None
+
+  class MiEntidadResponse(BaseModel):
+      id: int
+      campo_requerido: str
+      model_config = {"from_attributes": True}   # ← OBLIGATORIO para leer ORM objects
+
+¿Qué NO incluir en Response?
+  - Contraseñas (ni el hash)
+  - Campos internos que el cliente no debe ver
+  - Relaciones completas (para evitar datos circulares y exceso de datos)
+
+
+================================================================================
+PASO 9 — IMPLEMENTAR LA CAPA API: route.py (Endpoints)
+================================================================================
+
+Los endpoints reciben la petición HTTP y la despachan al servicio correcto.
+
+Estructura típica de un endpoint:
+
+  from fastapi import APIRouter, Depends, HTTPException, status
+  from sqlalchemy.orm import Session
+  from src.infraestructure.database import get_db
+
+  router = APIRouter(prefix="/api/v1")
+
+  # GET → listar todos
+  @router.get("/mi-entidad", response_model=List[MiEntidadResponse], tags=["MiEntidad"])
+  def listar(db: Session = Depends(get_db)):
+      return MiEntidadService(db).listar()
+
+  # GET → obtener uno por ID
+  @router.get("/mi-entidad/{id}", response_model=MiEntidadResponse, tags=["MiEntidad"])
+  def obtener(id: int, db: Session = Depends(get_db)):
+      obj = MiEntidadService(db).obtener(id)
+      if not obj:
+          raise HTTPException(status_code=404, detail="No encontrado")
+      return obj
+
+  # POST → crear
+  @router.post("/mi-entidad", response_model=MiEntidadResponse,
+               status_code=status.HTTP_201_CREATED, tags=["MiEntidad"])
+  def crear(data: MiEntidadCreate, db: Session = Depends(get_db)):
+      return MiEntidadService(db).crear(data.campo1, data.campo2)
+
+  # DELETE → eliminar
+  @router.delete("/mi-entidad/{id}", status_code=status.HTTP_204_NO_CONTENT, tags=["MiEntidad"])
+  def eliminar(id: int, db: Session = Depends(get_db)):
+      if not MiEntidadService(db).eliminar(id):
+          raise HTTPException(status_code=404, detail="No encontrado")
+
+Regla de orden de rutas:
+  Las rutas estáticas deben declararse ANTES que las rutas con parámetros:
+    CORRECTO:   GET /recursos/disponibles   (estática, primero)
+                GET /recursos/{id}          (con parámetro, después)
+    INCORRECTO: GET /recursos/{id}          ← capturaría "disponibles" como ID
+                GET /recursos/disponibles
+
+
+================================================================================
+PASO 10 — IMPLEMENTAR main.py (PUNTO DE ENTRADA)
+================================================================================
+
+  from fastapi import FastAPI
+  from fastapi.middleware.cors import CORSMiddleware
+  from src.api.route import router
+
+  app = FastAPI(title="Mi API", version="1.0.0")
+
+  # Permite al frontend (en otro puerto) hacer peticiones a esta API
+  app.add_middleware(
+      CORSMiddleware,
+      allow_origins=["*"],        # En producción: poner solo la URL del frontend
+      allow_credentials=True,
+      allow_methods=["*"],
+      allow_headers=["*"],
+  )
+
+  app.include_router(router)
+
+  @app.get("/")
+  def health_check():
+      return {"status": "ok"}
+
+
+================================================================================
+PASO 11 — ARRANCAR Y VERIFICAR EL SERVIDOR
+================================================================================
+
+11.1 Iniciar el servidor en modo desarrollo (recarga automática al guardar):
+    venv\Scripts\uvicorn.exe main:app --reload
+
+    Formato del comando: uvicorn <archivo>:<variable_app> --reload
+    "main:app" significa: en main.py, la variable llamada "app"
+
+11.2 Verificar que funciona:
+    Abrir en el navegador: http://localhost:8000
+    Debe responder: {"status": "ok"}
+
+11.3 Explorar la documentación interactiva:
+    http://localhost:8000/docs   ← Swagger UI (permite probar los endpoints)
+    http://localhost:8000/redoc  ← ReDoc (documentación más legible)
+
+11.4 Probar la conexión a la BD desde Python:
+    venv\Scripts\python.exe -c "
+    from src.infraestructure.database import engine
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        print('Conexión OK:', conn.execute(text('SELECT 1')).fetchone())
+    "
+
+
+================================================================================
+RESUMEN DEL FLUJO DE UNA PETICIÓN HTTP
+================================================================================
+
+  Cliente (browser/Postman)
+      │
+      │  HTTP Request: POST /api/v1/reservas
+      ▼
+  main.py → app.include_router(router)
+      │
+      ▼
+  route.py → crear_reserva(data: ReservaCreate, db)
+      │         Valida el body con Pydantic
+      │         Llama al servicio
+      ▼
+  services.py → ReservaService.crear(...)
+      │           Aplica lógica de negocio
+      │           Construye el objeto de dominio
+      │           Llama al repositorio
+      ▼
+  repository.py → ReservaRepository.create(reserva)
+      │             Ejecuta INSERT en MySQL
+      │             Hace commit()
+      │             Retorna el objeto con ID asignado
+      │
+  (sube por la pila en sentido inverso)
+      │
+      ▼
+  route.py → devuelve el objeto → FastAPI lo serializa con ReservaResponse
+      │
+      ▼
+  Cliente recibe: HTTP 201 Created + JSON con los datos de la reserva
+
+
+================================================================================
+ERRORES COMUNES Y CÓMO SOLUCIONARLOS
+================================================================================
+
+ERROR: ModuleNotFoundError: No module named 'src'
+SOLUCIÓN: Ejecutar uvicorn desde la carpeta raíz del proyecto (donde está main.py),
+          no desde dentro de src/.
+
+ERROR: sqlalchemy.exc.OperationalError: Can't connect to MySQL server
+SOLUCIÓN: Verificar que host, puerto, usuario y contraseña en .env son correctos.
+          Verificar que el servidor MySQL está accesible desde tu red.
+
+ERROR: sqlalchemy.exc.AmbiguousForeignKeysError
+SOLUCIÓN: Cuando un modelo tiene múltiples FK hacia la misma tabla, agregar
+          foreign_keys=[NombreModelo.nombre_columna_fk] en relationship().
+
+ERROR: pydantic_core.ValidationError: ... field required
+SOLUCIÓN: El body JSON enviado no tiene todos los campos requeridos por el schema Create.
+          Revisar qué campos son obligatorios (los que no tienen = None).
+
+ERROR: 404 Not Found en todos los endpoints
+SOLUCIÓN: Verificar que app.include_router(router) está en main.py y que
+          el prefix del router (/api/v1) coincide con la URL que se está probando.
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================
