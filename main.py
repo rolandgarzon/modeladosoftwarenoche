@@ -20,7 +20,7 @@ app = FastAPI(
     description="Api curso modelado de sistemas",
     version="1.0.0"
 )
-
+#actualizamos el cros
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],   # Acepta peticiones desde cualquier origen
@@ -32,6 +32,6 @@ app.add_middleware(
 app.include_router(router)
 
 #crear un endpoint para validar la salud del API
-@app.get("/",tags=["Health"])
+@app.get("/",tags=["Health salud"])
 def healht_check():
     return {"Status":"ok", "api":"IUTEDE Backend", "version":"1.0.0" }

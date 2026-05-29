@@ -10,8 +10,8 @@
 
 // URL base del backend FastAPI desplegado en Render.
 // La versión localhost queda comentada para desarrollo local.
-/*const API_BASE = 'http://localhost:8000';*/
-const API_BASE = 'https://modeladosoftwarenoche.onrender.com';
+const API_BASE = 'http://localhost:8000';
+
 
 // ===== Referencias al DOM =====
 // Se capturan una sola vez al cargar el script para evitar búsquedas repetidas en el DOM.
